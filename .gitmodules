@@ -1,0 +1,6 @@
+[submodule "deps/mumlib"]
+	path = deps/mumlib
+	url = https://github.com/slomkowski/mumlib.git
+[submodule "deps/googletest"]
+	path = deps/googletest
+	url = https://github.com/google/googletest
