@@ -7,11 +7,10 @@
 //
 
 #include "MumpiCallback.hpp"
-#include <stdio.h>
 
 
-MumpiCallback::MumpiCallback()  {
-
+MumpiCallback::MumpiCallback(std::shared_ptr<RingBuffer<int16_t>> out_buf) :
+        _out_buf(out_buf) {
 }
 
 MumpiCallback::~MumpiCallback() {
@@ -38,7 +37,10 @@ void MumpiCallback::audio(int target,
                           int sequenceNumber,
                           int16_t *pcm_data,
                           uint32_t pcm_data_size) {
-    printf("Received audio: pcm_data_size: %d\n", pcm_data_size);
+    _logger.info("Received audio: pcm_data_size: %d", pcm_data_size);
+    if(pcm_data != NULL) {
+        _out_buf->push(pcm_data, 0, pcm_data_size);
+    }
 }
 
 /**
@@ -56,5 +58,7 @@ void  MumpiCallback::textMessage(uint32_t actor,
                                  std::vector<uint32_t> tree_id,
                                  std::string message) {
     mumlib::BasicCallback::textMessage(actor, session, channel_id, tree_id, message);
-    printf("Received text message: %s\n", message.c_str());
+    _logger.info("Received text message: %s", message.c_str());
 }
+
+

@@ -34,8 +34,8 @@ static void sigHandler(int signal) {
  * Simple data structure for storing audio sample data
  */
 struct PaData {
-	std::shared_ptr<RingBuffer<int16_t>> recBuf;	// recording ring buffer
-	std::shared_ptr<RingBuffer<int16_t>> outBuf;	// output ring buffer
+	std::shared_ptr<RingBuffer<int16_t>> rec_buf;	// recording ring buffer
+	std::shared_ptr<RingBuffer<int16_t>> out_buf;	// output ring buffer
 };
 
 /**
@@ -70,7 +70,7 @@ static int paRecordCallback(const void *inputBuffer,
 	if(inputBuffer != NULL) {
 //		printf("Filling buf with %d bytes\n", framesPerBuffer * NUM_CHANNELS);
 		// fill ring buffer with samples
-		pa_data->recBuf->push(input_buffer, 0, framesPerBuffer * NUM_CHANNELS);
+		pa_data->rec_buf->push(input_buffer, 0, framesPerBuffer * NUM_CHANNELS);
 		// for(int i = 0; i < framesPerBuffer * NUM_CHANNELS; i += NUM_CHANNELS) {
 		// 	pa_data->buf->push(input_buffer[i]);	// channel 1
 		// 	pa_data->buf->push(input_buffer[i+1]);	// channel 2
@@ -79,8 +79,8 @@ static int paRecordCallback(const void *inputBuffer,
 		// fill ring buffer with silence
 		printf("Filling buf with silence\n");
 		for(int i = 0; i < framesPerBuffer * NUM_CHANNELS; i += NUM_CHANNELS) {
-			pa_data->recBuf->push(0);	// channel 1
-			pa_data->recBuf->push(0);	// channel 2
+			pa_data->rec_buf->push(0);	// channel 1
+			pa_data->rec_buf->push(0);	// channel 2
 		}
 	}
 
@@ -108,11 +108,26 @@ static int paOutputCallback(const void *inputBuffer,
                             void *userData ) {
 	int result = paContinue;
 	(void) inputBuffer;
-	(void) outputBuffer;
 	(void) timeInfo;
 	(void) framesPerBuffer;
 	(void) statusFlags;
-	(void) userData;
+	// cast the pointers to the appropriate types
+	const PaData *pa_data = (const PaData*) userData;
+	int16_t *output_buffer = (int16_t*) outputBuffer;
+
+	// output pcm data to PortAudio's output_buffer by reading from our ring buffer
+	// if we dont have enough samples in our ring buffer, we have to still supply 0s to the output_buffer
+	const size_t requested_samples = (framesPerBuffer * NUM_CHANNELS);
+	const size_t available_samples = pa_data->out_buf->getRemaining();
+	if(requested_samples > available_samples) {
+		pa_data->out_buf->top(output_buffer, 0, available_samples);
+		for(size_t i = available_samples; i < requested_samples - available_samples; i++) {
+			output_buffer[i] = 0;
+		}
+	} else {
+		pa_data->out_buf->top(output_buffer, 0, requested_samples);
+	}
+
 	return result;
 }
 
@@ -244,15 +259,17 @@ int main(int argc, char *argv[]) {
 	logger.info(Pa_GetVersionText());
 
 	// init audio I/O stream
-	PaStream *stream;
+	PaStream *input_stream;
+	PaStream *output_stream;
 	PaData data;
+	PaStreamParameters inputParameters;
+	PaStreamParameters output_parameters;
 
 	// ring buffer size to about 500ms
 	const size_t MAX_SAMPLES = nextPowerOf2(0.5 * SAMPLE_RATE * NUM_CHANNELS);
-	data.recBuf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
-	data.outBuf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
+	data.rec_buf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
+	data.out_buf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
 
-	PaStreamParameters  inputParameters;
 	inputParameters.device = Pa_GetDefaultInputDevice();
 	if (inputParameters.device == paNoDevice) {
 		logger.error("No default input device.");
@@ -263,8 +280,7 @@ int main(int argc, char *argv[]) {
 	inputParameters.suggestedLatency = Pa_GetDeviceInfo(inputParameters.device)->defaultLowInputLatency;
 	inputParameters.hostApiSpecificStreamInfo = NULL;
 
-	logger.info("Opening stream...");
-	err = Pa_OpenStream(&stream,               // the stream
+	err = Pa_OpenStream(&input_stream,               // the stream
 						&inputParameters,      // input params
 						NULL,                  // output params
 						SAMPLE_RATE,           // sample rate
@@ -274,20 +290,44 @@ int main(int argc, char *argv[]) {
 						&data);                // data pointer
 
 	if(err != paNoError) {
-	    logger.error("PortAudio error: %s", Pa_GetErrorText(err));
+	    logger.error("Failed to open input stream: %s", Pa_GetErrorText(err));
 		exit(-1);
 	}
 
-	logger.info("Opened default stream");
-	logger.info("Starting stream...");
-
-	err = Pa_StartStream( stream );
+	err = Pa_StartStream(input_stream);
 	if(err != paNoError) {
-		logger.error("PortAudio error: %s", Pa_GetErrorText(err));
+		logger.error("Failed to start input stream: %s", Pa_GetErrorText(err));
 		exit(-1);
 	}
 
-	logger.info("Started stream!");
+	output_parameters.device = Pa_GetDefaultOutputDevice(); /* default output device */
+	if(output_parameters.device == paNoDevice) {
+		logger.error("No default output device.");
+		exit(-1);
+	}
+	output_parameters.channelCount = NUM_CHANNELS;
+	output_parameters.sampleFormat =  paInt16;
+	output_parameters.suggestedLatency = Pa_GetDeviceInfo(output_parameters.device)->defaultLowOutputLatency;
+	output_parameters.hostApiSpecificStreamInfo = NULL;
+
+	err = Pa_OpenStream(&output_stream,
+						NULL, /* no input */
+						&output_parameters,
+						SAMPLE_RATE,
+						512,
+						paClipOff,      // we won't output out of range samples so don't bother clipping them
+						paOutputCallback,
+						&data );
+	if(err != paNoError) {
+		logger.error("Failed to open output stream: %s", Pa_GetErrorText(err));
+		exit(-1);
+	}
+
+	err = Pa_StartStream(output_stream);
+	if(err != paNoError) {
+		logger.error("Failed to start output stream: %s", Pa_GetErrorText(err));
+		exit(-1);
+	}
 
 	///////////////////////
 	// init mumble library
@@ -295,7 +335,7 @@ int main(int argc, char *argv[]) {
 	// open output audio stream, pipe incoming audio PCM data to output audio stream
 
 	// This stuff should be on a separate thread
-	MumpiCallback mumble_callback;
+	MumpiCallback mumble_callback(data.out_buf);
 	mumlib::MumlibConfiguration conf;
 	conf.opusEncoderBitrate = SAMPLE_RATE;
 	mumlib::Mumlib mum(mumble_callback, conf);
@@ -322,14 +362,14 @@ int main(int argc, char *argv[]) {
 		const int OPUS_FRAME_SIZE = 960;
 		int16_t *outBuf = new int16_t[MAX_SAMPLES];
 		while(!sig_caught) {
-			if(!data.recBuf->isEmpty() && data.recBuf->getRemaining() >= OPUS_FRAME_SIZE) {
+			if(!data.rec_buf->isEmpty() && data.rec_buf->getRemaining() >= OPUS_FRAME_SIZE) {
 				// do a bulk get and send it through mumble client
 
 				if(mum.getConnectionState() == mumlib::ConnectionState::CONNECTED) {
 					// Opus can encode frames of 2.5, 5, 10, 20, 40, or 60 ms
 					// the Opus RFC 6716 recommends using 20ms frame sizes
 					// so at 48k sample rate, 20ms is 960 samples
-					const size_t samplesRetrieved = data.recBuf->top(outBuf, 0, OPUS_FRAME_SIZE);
+					const size_t samplesRetrieved = data.rec_buf->top(outBuf, 0, OPUS_FRAME_SIZE);
 //					logger.info("Sending %d samples through mumble", samplesRetrieved);
 					mum.sendAudioData(outBuf, OPUS_FRAME_SIZE);
 				}
@@ -371,6 +411,20 @@ int main(int argc, char *argv[]) {
 	// clean up audio library
 	///////////////////////////
 	logger.info("Cleaning up PortAudio...");
+
+	// close streams
+	err = Pa_CloseStream(input_stream);
+	if(err != paNoError) {
+		logger.error("Failed to close inputstream: %s", Pa_GetErrorText(err));
+		exit(-1);
+	}
+	err = Pa_CloseStream(output_stream);
+	if(err != paNoError) {
+		logger.error("Failed to close output stream: %s", Pa_GetErrorText(err));
+		exit(-1);
+	}
+
+	// terminate PortAudio engine
 	err = Pa_Terminate();
 	if(err != paNoError) {
 		logger.error("PortAudio error: %s", Pa_GetErrorText(err));

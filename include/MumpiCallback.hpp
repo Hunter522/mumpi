@@ -11,11 +11,12 @@
 
 #include <string>
 #include <stdio.h>
+#include "RingBuffer.hpp"
 #include "mumlib/Transport.hpp"
 
 class MumpiCallback : public mumlib::BasicCallback {
 public:
-    MumpiCallback();
+    MumpiCallback(std::shared_ptr<RingBuffer<int16_t>> out_buf);
     ~MumpiCallback();
 
     virtual void serverSync(std::string welcome_text,
@@ -37,6 +38,8 @@ public:
 
     mumlib::Mumlib *mum;
 private:
+    std::shared_ptr<RingBuffer<int16_t>> _out_buf;
+    log4cpp::Category& _logger = log4cpp::Category::getInstance("mumpi.MumpiCallback");
 };
 
 
