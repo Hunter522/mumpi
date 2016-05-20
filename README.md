@@ -27,10 +27,11 @@ Currently this project has only been tested on Raspbian Jessie.
  * Opus library
  * Google Protobuf: libraries and compiler
 * [PortAudio](http://www.portaudio.com/)
+* [Google Test](https://github.com/google/googletest)
 * [CMake](https://cmake.org/)
 
-All of these dependencies (except mumlib) can be found in most popular Linux distro
-package manager repositories. Mumlib is used in this project as a Git submodule and is
+All of these dependencies (except mumlib & Google Test) can be found in most popular Linux distro
+package manager repositories. Mumlib & Google Test are used in this project as a Git submodules and are
 therefor built and linked when this project is built.
 
 To download and install these dependencies on latest Raspbian Jessie:
