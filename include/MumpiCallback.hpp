@@ -35,7 +35,6 @@ public:
                              std::vector<uint32_t> tree_id,
                              std::string message) override;
 
-    void doSomething();
     mumlib::Mumlib *mum;
 private:
 };

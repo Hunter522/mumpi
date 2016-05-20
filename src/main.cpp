@@ -1,7 +1,7 @@
+#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string>
-#include <unistd.h>
 #include <thread>
 #include <log4cpp/Category.hh>
 #include <log4cpp/FileAppender.hh>
@@ -11,10 +11,12 @@
 #include "MumpiCallback.hpp"
 #include "RingBuffer.hpp"
 
-
 #define SAMPLE_RATE (48000)
 #define NUM_CHANNELS (1)
 
+static log4cpp::Appender *appender = new log4cpp::OstreamAppender("console", &std::cout);
+static log4cpp::Category& logger = log4cpp::Category::getRoot();
+static volatile sig_atomic_t sig_caught = 0;
 static bool mumble_thread_run_flag = true;
 static bool input_consumer_thread_run_flag = true;
 
@@ -24,15 +26,16 @@ static bool input_consumer_thread_run_flag = true;
  * @param signal the signal
  */
 static void sigHandler(int signal) {
-	printf("received signal %d\n", signal);
-	mumble_thread_run_flag = false;	// trigger running threads to stop
+	logger.info("caught signal %d", signal);
+	sig_caught = signal;
 }
 
 /**
  * Simple data structure for storing audio sample data
  */
 struct PaData {
-	std::shared_ptr<RingBuffer<int16_t>> buf;
+	std::shared_ptr<RingBuffer<int16_t>> recBuf;	// recording ring buffer
+	std::shared_ptr<RingBuffer<int16_t>> outBuf;	// output ring buffer
 };
 
 /**
@@ -67,7 +70,7 @@ static int paRecordCallback(const void *inputBuffer,
 	if(inputBuffer != NULL) {
 //		printf("Filling buf with %d bytes\n", framesPerBuffer * NUM_CHANNELS);
 		// fill ring buffer with samples
-		pa_data->buf->push(input_buffer, 0, framesPerBuffer * NUM_CHANNELS);
+		pa_data->recBuf->push(input_buffer, 0, framesPerBuffer * NUM_CHANNELS);
 		// for(int i = 0; i < framesPerBuffer * NUM_CHANNELS; i += NUM_CHANNELS) {
 		// 	pa_data->buf->push(input_buffer[i]);	// channel 1
 		// 	pa_data->buf->push(input_buffer[i+1]);	// channel 2
@@ -76,8 +79,8 @@ static int paRecordCallback(const void *inputBuffer,
 		// fill ring buffer with silence
 		printf("Filling buf with silence\n");
 		for(int i = 0; i < framesPerBuffer * NUM_CHANNELS; i += NUM_CHANNELS) {
-			pa_data->buf->push(0);	// channel 1
-			pa_data->buf->push(0);	// channel 2
+			pa_data->recBuf->push(0);	// channel 1
+			pa_data->recBuf->push(0);	// channel 2
 		}
 	}
 
@@ -139,6 +142,17 @@ void help() {
 	exit(1);
 }
 
+/**
+ * main function
+ *
+ * Program flow:
+ * 1. Parse command line args
+ * 2. Init PortAudio engine and open default input and output audio devices
+ * 3. Init mumlib client
+ * 4. Busy loop until CTRL+C
+ * 5. Clean up mumlib client
+ * 6. Clean up PortAudio engine
+ */
 int main(int argc, char *argv[]) {
 	// Program flow:
 	// parse cmd line args
@@ -148,18 +162,12 @@ int main(int argc, char *argv[]) {
 	// connect to mumble server
 	//
 
-
-	//TODO: Use Strings instead of cstrings
 	// parse command line args using getopt
-
-	log4cpp::Appender *appender = new log4cpp::OstreamAppender("console", &std::cout);
 	appender->setLayout(new log4cpp::BasicLayout());
 
-	log4cpp::Category& logger = log4cpp::Category::getRoot();
 	logger.setPriority(log4cpp::Priority::WARN);
 	logger.addAppender(appender);
 
-	std::vector<std::thread> thread_pool;
 	bool verbose = false;
 	std::string server;
 	std::string username;
@@ -233,7 +241,7 @@ int main(int argc, char *argv[]) {
 		exit(-1);
 	}
 
-	logger.info("%s", Pa_GetVersionText());
+	logger.info(Pa_GetVersionText());
 
 	// init audio I/O stream
 	PaStream *stream;
@@ -241,12 +249,13 @@ int main(int argc, char *argv[]) {
 
 	// ring buffer size to about 500ms
 	const size_t MAX_SAMPLES = nextPowerOf2(0.5 * SAMPLE_RATE * NUM_CHANNELS);
-	data.buf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
+	data.recBuf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
+	data.outBuf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
 
 	PaStreamParameters  inputParameters;
 	inputParameters.device = Pa_GetDefaultInputDevice();
 	if (inputParameters.device == paNoDevice) {
-		logger.error("Error: No default input device.");
+		logger.error("No default input device.");
 		exit(-1);
 	}
 	inputParameters.channelCount = NUM_CHANNELS;
@@ -255,22 +264,14 @@ int main(int argc, char *argv[]) {
 	inputParameters.hostApiSpecificStreamInfo = NULL;
 
 	logger.info("Opening stream...");
-	err = Pa_OpenStream(&stream,
-						&inputParameters,
-						NULL,                  /* &outputParameters, */
-						SAMPLE_RATE,
-						512,
-						paClipOff,      /* we won't output out of range samples so don't bother clipping them */
-						paRecordCallback,
-						&data );
-//	err = Pa_OpenDefaultStream(&stream,         //
-//	                           2,               // 2 input channels
-//	                           0,               // 0 output channels
-//	                           paInt16,         // 16 bit int output
-//	                           SAMPLE_RATE,     // sample rate
-//	                           256,             // frames per buffer
-//	                           paRecordCallback,// PortAudio callback
-//	                           &data);          // data pointer
+	err = Pa_OpenStream(&stream,               // the stream
+						&inputParameters,      // input params
+						NULL,                  // output params
+						SAMPLE_RATE,           // sample rate
+						512,                   // frames per buffer
+						paClipOff,             // we won't output out of range samples so don't bother clipping them
+						paRecordCallback,      // PortAudio callback function
+						&data);                // data pointer
 
 	if(err != paNoError) {
 	    logger.error("PortAudio error: %s", Pa_GetErrorText(err));
@@ -279,14 +280,14 @@ int main(int argc, char *argv[]) {
 
 	logger.info("Opened default stream");
 	logger.info("Starting stream...");
-	err = Pa_StartStream( stream );
-	logger.info("Started stream!");
 
-	///////////////////////
-	// init gpio library
-	///////////////////////
-	// when button is pressed, start input audio stream and pipe it to output audio stream
-	// when button is released, stop input audio stream
+	err = Pa_StartStream( stream );
+	if(err != paNoError) {
+		logger.error("PortAudio error: %s", Pa_GetErrorText(err));
+		exit(-1);
+	}
+
+	logger.info("Started stream!");
 
 	///////////////////////
 	// init mumble library
@@ -300,12 +301,11 @@ int main(int argc, char *argv[]) {
 	mumlib::Mumlib mum(mumble_callback, conf);
 	mumble_callback.mum = &mum;
 	std::thread mumble_thread([&]() {
-		while (mumble_thread_run_flag) {
+		while(!sig_caught) {
 			try {
 				logger.info("Connecting to %s", server.c_str());
 				mum.connect(server, 64738, username, "");
 				mum.run();
-				logger.info("yo");
 			} catch (mumlib::TransportException &exp) {
 				logger.error("TransportException: %s.", exp.what());
 				logger.error("Attempting to reconnect in 5 s.");
@@ -321,15 +321,15 @@ int main(int argc, char *argv[]) {
 
 		const int OPUS_FRAME_SIZE = 960;
 		int16_t *outBuf = new int16_t[MAX_SAMPLES];
-		while(input_consumer_thread_run_flag) {
-			if(!data.buf->isEmpty() && data.buf->getRemaining() >= OPUS_FRAME_SIZE) {
+		while(!sig_caught) {
+			if(!data.recBuf->isEmpty() && data.recBuf->getRemaining() >= OPUS_FRAME_SIZE) {
 				// do a bulk get and send it through mumble client
 
 				if(mum.getConnectionState() == mumlib::ConnectionState::CONNECTED) {
 					// Opus can encode frames of 2.5, 5, 10, 20, 40, or 60 ms
-					// the Opus RFC 6716 reccomends  using 20ms frame sizes
+					// the Opus RFC 6716 recommends using 20ms frame sizes
 					// so at 48k sample rate, 20ms is 960 samples
-					const size_t samplesRetrieved = data.buf->top(outBuf, 0, OPUS_FRAME_SIZE);
+					const size_t samplesRetrieved = data.recBuf->top(outBuf, 0, OPUS_FRAME_SIZE);
 //					logger.info("Sending %d samples through mumble", samplesRetrieved);
 					mum.sendAudioData(outBuf, OPUS_FRAME_SIZE);
 				}
@@ -341,50 +341,40 @@ int main(int argc, char *argv[]) {
 		delete[] outBuf;
 	});
 
-    // init signal handler
-	// struct sigaction action;
- //    action.sa_handler = [](int signal) {
- //    	printf("Received signal: %d", signal);
- //    };
- //    action.sa_flags = 0;
- //    sigemptyset (&action.sa_mask);
- //    sigaction (SIGINT, &action, NULL);
- //    sigaction (SIGTERM, &action, NULL);
+	// init signal handler
+	struct sigaction action;
+	action.sa_handler = sigHandler;
+	action.sa_flags = 0;
+	sigemptyset(&action.sa_mask);
+	sigaction(SIGINT, &action, NULL);
+	sigaction(SIGTERM, &action, NULL);
+
+	// busy loop until signal is caught
+	while(!sig_caught) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(250));
+	}
 
 	///////////////////////
 	// CLEAN UP
 	///////////////////////
+	logger.info("Cleaning up...");
 
 	///////////////////////////
 	// clean up mumble library
 	///////////////////////////
-
-	mumble_thread.join();
 	logger.info("Disconnecting...");
+	input_consumer_thread.join();
 	mum.disconnect();
-
-	///////////////////////////
-	// clean up gpio library
-	///////////////////////////
+	mumble_thread.join();
 
 	///////////////////////////
 	// clean up audio library
 	///////////////////////////
-	// close input audio stream (if open)
-	// close output audio stream
-	// terminate audio lib
-	// err = Pa_CloseStream(stream);
-	// if(err != paNoError) {
-	//  logger.info("PortAudio error: %s", Pa_GetErrorText(err));
-	//  exit(-1);
-	// }
 	logger.info("Cleaning up PortAudio...");
 	err = Pa_Terminate();
 	if(err != paNoError) {
 		logger.error("PortAudio error: %s", Pa_GetErrorText(err));
 		exit(-1);
 	}
-
-	logger.info("Done!");
 	return 0;
 }
