@@ -2,18 +2,17 @@
 
 *mumpi* is a simple mumble client daemon for the RaspberryPi. Mumpi aims to have
 the following features:
+
  * simple mumble client that auto-connects to server
- * allows user to use a Push-To-Talk (PTT) button to speak and receive audio
- through speakers
- * uses external PTT button wired to GPIO pins
+ * allows user to either plug in a microphone and PTT button to use as an intercom, or plug in a two-way radio and bridge a radio net with a mumble channel
  * plug-and-play functionality by using default audio input and output devices
- * configurable using a simple properties file
+ * configurable through command line
  * runs as daemon (headless)
  * runs at startup
 
 Currently this project has only been tested on Raspbian Jessie.
 
-## Future
+## Future Plans
 
  * allow user to switch channels using buttons/switches
  * LCD display support
