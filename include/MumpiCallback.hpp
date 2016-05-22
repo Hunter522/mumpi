@@ -1,11 +1,3 @@
-//
-//  MumpiCallback.hpp
-//  mumpi
-//
-//  Created by <author> on 10/05/2016.
-//
-//
-
 #ifndef MumpiCallback_hpp
 #define MumpiCallback_hpp
 

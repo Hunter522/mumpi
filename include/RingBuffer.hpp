@@ -1,11 +1,3 @@
-//
-//  RingBuffer.hpp
-//  mumpi
-//
-//  Created by <author> on 12/05/2016.
-//
-//
-
 #ifndef RingBuffer_hpp
 #define RingBuffer_hpp
 

@@ -1,11 +1,3 @@
-//
-//  MumpiCallback.cpp
-//  mumpi
-//
-//  Created by <author> on 10/05/2016.
-//
-//
-
 #include "MumpiCallback.hpp"
 
 
@@ -60,5 +52,3 @@ void  MumpiCallback::textMessage(uint32_t actor,
     mumlib::BasicCallback::textMessage(actor, session, channel_id, tree_id, message);
     _logger.info("Received text message: %s", message.c_str());
 }
-
-
