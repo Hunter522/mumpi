@@ -14,7 +14,7 @@ public:
     ~RingBuffer();
 
     // member functions
-    T top();
+    T& top();
     size_t top(T* dest, int offset, size_t len);
     size_t topRemaining(T* outbuf);
     void push(T val);
@@ -66,15 +66,13 @@ RingBuffer<T>::~RingBuffer() {
  * @return the next element
  */
 template <typename T>
-T RingBuffer<T>::top() {
+T& RingBuffer<T>::top() {
     std::unique_lock<std::recursive_mutex> lock(_mutex);
     if(!this->isEmpty()) {
-        const T val = _array[_front];
+        T &val = _array[_front];
         _front = (_front + 1) % _size;
         _remaining--;
         return val;
-    } else {
-        return NULL;
     }
 }
 
