@@ -9,20 +9,30 @@ MumpiCallback::~MumpiCallback() {
 
 }
 
+/**
+ * Handles received serverSync messages (when connection established).
+ *
+ * @param welcome_text  welcome text
+ * @param session       session
+ * @param max_bandwidth max bandwidth
+ * @param permissions   permissions
+ */
 void MumpiCallback::serverSync(std::string welcome_text,
                                int32_t session,
                                int32_t max_bandwidth,
                                int64_t permissions) {
-    mum->sendTextMessage("Hello world!");
+    _logger.info("Joined server!");
+    _logger.info(welcome_text);
 }
 
 /**
- * [MumpiCallback::audio description]
- * @param target         [description]
- * @param sessionId      [description]
- * @param sequenceNumber [description]
- * @param pcm_data       [description]
- * @param pcm_data_size  [description]
+ * Handles received audio packets and pushes them to the circular buffer
+ *
+ * @param target         target
+ * @param sessionId      session ifndef
+ * @param sequenceNumber sequence number
+ * @param pcm_data       raw PCM data (int16_t)
+ * @param pcm_data_size  PCM data buf size
  */
 void MumpiCallback::audio(int target,
                           int sessionId,
@@ -36,19 +46,17 @@ void MumpiCallback::audio(int target,
 }
 
 /**
- * [MumpiCallback::textMessage description]
- * @param  actor      [description]
- * @param  session    [description]
- * @param  channel_id [description]
- * @param  tree_id    [description]
- * @param  message    [description]
- * @return            [description]
+ * Handles received text messages
+ * @param  actor      actor
+ * @param  session    session
+ * @param  channel_id channel id
+ * @param  tree_id    tree id
+ * @param  message    the message
  */
-void  MumpiCallback::textMessage(uint32_t actor,
-                                 std::vector<uint32_t> session,
-                                 std::vector<uint32_t> channel_id,
-                                 std::vector<uint32_t> tree_id,
-                                 std::string message) {
-    mumlib::BasicCallback::textMessage(actor, session, channel_id, tree_id, message);
+void MumpiCallback::textMessage(uint32_t actor,
+                                std::vector<uint32_t> session,
+                                std::vector<uint32_t> channel_id,
+                                std::vector<uint32_t> tree_id,
+                                std::string message) {
     _logger.info("Received text message: %s", message.c_str());
 }

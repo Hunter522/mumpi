@@ -6,6 +6,10 @@
 #include "RingBuffer.hpp"
 #include "mumlib/Transport.hpp"
 
+/**
+ * Callback class for mumlib. This simply extends from mumlib::BasicCallback
+ * which implements some of the virtual callback methods 
+ */
 class MumpiCallback : public mumlib::BasicCallback {
 public:
     MumpiCallback(std::shared_ptr<RingBuffer<int16_t>> out_buf);

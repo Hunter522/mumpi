@@ -45,13 +45,13 @@ struct PaData {
  * it in a ring buffer that we allocated. That data will then be consumed by
  * another thread.
  *
- * @param  inputBuffer     [description]
- * @param  outputBuffer    [description]
- * @param  framesPerBuffer [description]
- * @param  timeInfo        [description]
- * @param  statusFlags     [description]
- * @param  userData        [description]
- * @return                 [description]
+ * @param  inputBuffer     input sample buffer (interleaved if multi channel)
+ * @param  outputBuffer    output sample buffer (interleaved if multi channel)
+ * @param  framesPerBuffer number of frames per buffer
+ * @param  timeInfo        time information for stream
+ * @param  statusFlags     i/o buffer status flags
+ * @param  userData        circular buffer
+ * @return                 PaStreamCallbackResult, paContinue usually
  */
 static int paRecordCallback(const void *inputBuffer,
                             void *outputBuffer,
@@ -87,13 +87,13 @@ static int paRecordCallback(const void *inputBuffer,
  * ready to be sent. This will simply consume data from a ring buffer that we
  * allocated which is being filled by another thread.
  *
- * @param  inputBuffer     [description]
- * @param  outputBuffer    [description]
- * @param  framesPerBuffer [description]
- * @param  timeInfo        [description]
- * @param  statusFlags     [description]
- * @param  userData        [description]
- * @return                 [description]
+ * @param  inputBuffer     input sample buffer (interleaved if multi channel)
+ * @param  outputBuffer    output sample buffer (interleaved if multi channel)
+ * @param  framesPerBuffer number of frames per buffer
+ * @param  timeInfo        time information for stream
+ * @param  statusFlags     i/o buffer status flags
+ * @param  userData        circular buffer
+ * @return                 PaStreamCallbackResult, paContinue usually
  */
 static int paOutputCallback(const void *inputBuffer,
                             void *outputBuffer,
@@ -126,6 +126,12 @@ static int paOutputCallback(const void *inputBuffer,
 	return result;
 }
 
+/**
+ * Gets the next power of 2 for the passed argument
+ *
+ * @param  val input value
+ * @return     next power of 2 for passed arg
+ */
 static unsigned nextPowerOf2(unsigned val) {
     val--;
     val = (val >> 1) | val;
@@ -354,7 +360,7 @@ int main(int argc, char *argv[]) {
 			if(!data.rec_buf->isEmpty() && data.rec_buf->getRemaining() >= OPUS_FRAME_SIZE) {
 				// do a bulk get and send it through mumble client
 				if(mum.getConnectionState() == mumlib::ConnectionState::CONNECTED) {
-					const size_t samplesRetrieved = data.rec_buf->top(outBuf, 0, OPUS_FRAME_SIZE);
+					data.rec_buf->top(outBuf, 0, OPUS_FRAME_SIZE);
 					mum.sendAudioData(outBuf, OPUS_FRAME_SIZE);
 				}
 			} else {
