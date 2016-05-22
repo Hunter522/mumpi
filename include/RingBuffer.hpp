@@ -2,6 +2,7 @@
 #define RingBuffer_hpp
 
 #include <mutex>
+#include <EmptyBufferException.hpp>
 
 /**
  * Simple unbounded circular buffer implementation. Thread-safe.
@@ -64,6 +65,7 @@ RingBuffer<T>::~RingBuffer() {
  * @brief Gets the next element from the front of the buffer.
  *
  * @return the next element
+ * @throws EmptyBufferException if buffer is empty
  */
 template <typename T>
 T& RingBuffer<T>::top() {
@@ -73,6 +75,8 @@ T& RingBuffer<T>::top() {
         _front = (_front + 1) % _size;
         _remaining--;
         return val;
+    } else {
+        throw EmptyBufferException();
     }
 }
 

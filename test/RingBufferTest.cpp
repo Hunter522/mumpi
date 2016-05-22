@@ -62,6 +62,17 @@ TEST_F(RingBufferTest, TestPushBulk) {
 	ASSERT_EQ(0, _pRingBuffer->getRemaining());
 }
 
+TEST_F(RingBufferTest, TestTopEmpty) {
+	ASSERT_TRUE(_pRingBuffer->isEmpty());
+	bool caughtException = false;
+	try {
+		_pRingBuffer->top();
+	} catch(EmptyBufferException &e) {
+		caughtException = true;
+	}
+	ASSERT_TRUE(caughtException);
+}
+
 TEST_F(RingBufferTest, TestTopBulk) {
 	const int TEMP_BUF_SIZE = 5;
 	std::array<int, TEMP_BUF_SIZE> tempBuf;
@@ -72,7 +83,7 @@ TEST_F(RingBufferTest, TestTopBulk) {
 	ASSERT_EQ(TEMP_BUF_SIZE, _pRingBuffer->getRemaining());
 	tempBuf.fill(0);
 	_pRingBuffer->top(tempBuf.begin(), 0, TEMP_BUF_SIZE);
-	ASSERT_EQ(0, _pRingBuffer->getRemaining());	
+	ASSERT_EQ(0, _pRingBuffer->getRemaining());
 }
 
 TEST_F(RingBufferTest, TestTopRemaining) {
@@ -91,11 +102,11 @@ TEST_F(RingBufferTest, TestWrapNoOverwrite) {
 	// set up to wrap 2
 	std::array<int, 12> tempBuf;
 	std::iota(tempBuf.begin(), tempBuf.end(), 0);
-	
+
 	// push 5 in, front should be 0, back should be 5
 	_pRingBuffer->push(tempBuf.begin(), 0, 5);
 	ASSERT_EQ(5, _pRingBuffer->getRemaining());
-	
+
 	// top 5 off, front should be 5, back should be 5, buffer should be empty
 	for(int i = 0; i < 5; i++) {
 		ASSERT_EQ(tempBuf[i], _pRingBuffer->top());
@@ -116,11 +127,11 @@ TEST_F(RingBufferTest, TestWrapOverwrite) {
 	// set up to wrap 2
 	std::array<int, 12> tempBuf;
 	std::iota(tempBuf.begin(), tempBuf.end(), 0);
-	
+
 	// push 5 in, front should be 0, back should be 5
 	_pRingBuffer->push(tempBuf.begin(), 0, 5);
 	ASSERT_EQ(5, _pRingBuffer->getRemaining());
-	
+
 	ASSERT_FALSE(_pRingBuffer->isEmpty());
 
 
