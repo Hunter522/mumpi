@@ -114,6 +114,8 @@ static int paOutputCallback(const void *inputBuffer,
 	// if we dont have enough samples in our ring buffer, we have to still supply 0s to the output_buffer
 	const size_t requested_samples = (framesPerBuffer * NUM_CHANNELS);
 	const size_t available_samples = pa_data->out_buf->getRemaining();
+	logger.info("requested_samples: %d", requested_samples);
+	logger.info("available_samples: %d", available_samples);
 	if(requested_samples > available_samples) {
 		pa_data->out_buf->top(output_buffer, 0, available_samples);
 		for(size_t i = available_samples; i < requested_samples - available_samples; i++) {
@@ -155,6 +157,9 @@ void help() {
 	printf("-v, --verbose             Verbose mode on.\n");
 	printf("-s, --server <string>     mumble server IP:PORT. Required.\n");
 	printf("-u, --username <username> username. Required.\n");
+	printf("-d, --delay <delay>       output delay in seconds. Default is \n");
+	printf("                          out device's reccomended latency. 0.1\n");
+	printf("                          - 0.5s should be good.\n");
 	exit(1);
 }
 
@@ -174,15 +179,17 @@ int main(int argc, char *argv[]) {
 	std::string server;
 	std::string username;
 	int next_option;
-	const char* const short_options = "hvs:u:";
+	const char* const short_options = "hvs:u:d:";
 	const struct option long_options[] =
 	{
 		{ "help", 0, NULL, 'h' },
 		{ "verbose", 0, NULL, 'v' },
 		{ "server", 1, NULL, 's' },
 		{ "username", 1, NULL, 'u' },
+		{ "delay", 1, NULL, 'd'},
 		{ NULL, 0, NULL, 0 }
 	};
+	double outputDelay = -1.0;
 
 	// init logger
 	appender->setLayout(new log4cpp::BasicLayout());
@@ -213,6 +220,10 @@ int main(int argc, char *argv[]) {
 
 		case 'u':      // -u or --username
 			username = std::string(optarg);
+			break;
+
+		case 'd':
+			outputDelay = std::stod(optarg);
 			break;
 
 		case '?':      // Invalid option
@@ -272,6 +283,8 @@ int main(int argc, char *argv[]) {
 	inputParameters.suggestedLatency = Pa_GetDeviceInfo(inputParameters.device)->defaultLowInputLatency;
 	inputParameters.hostApiSpecificStreamInfo = NULL;
 
+	logger.info("inputParameters.suggestedLatency: %.4f", inputParameters.suggestedLatency);
+
 	err = Pa_OpenStream(&input_stream,         // the input stream
 						&inputParameters,      // input params
 						NULL,                  // output params
@@ -281,14 +294,10 @@ int main(int argc, char *argv[]) {
 						paRecordCallback,      // PortAudio callback function
 						&data);                // data pointer
 
+	logger.info("defaultHighOutputLatency: %.4f", Pa_GetDeviceInfo(inputParameters.device)->defaultHighOutputLatency);
+
 	if(err != paNoError) {
 	    logger.error("Failed to open input stream: %s", Pa_GetErrorText(err));
-		exit(-1);
-	}
-
-	err = Pa_StartStream(input_stream);
-	if(err != paNoError) {
-		logger.error("Failed to start input stream: %s", Pa_GetErrorText(err));
 		exit(-1);
 	}
 
@@ -299,8 +308,13 @@ int main(int argc, char *argv[]) {
 	}
 	output_parameters.channelCount = NUM_CHANNELS;
 	output_parameters.sampleFormat =  paInt16;
-	output_parameters.suggestedLatency = Pa_GetDeviceInfo(output_parameters.device)->defaultLowOutputLatency;
+
+	if(outputDelay < 0.0)
+		outputDelay = Pa_GetDeviceInfo(output_parameters.device)->defaultHighOutputLatency;
+	output_parameters.suggestedLatency = outputDelay;
 	output_parameters.hostApiSpecificStreamInfo = NULL;
+
+	logger.info("output_parameters.suggestedLatency: %.4f", output_parameters.suggestedLatency);
 
 	err = Pa_OpenStream(&output_stream,		// the output stream
 						NULL, 				// input params
@@ -310,8 +324,20 @@ int main(int argc, char *argv[]) {
 						paClipOff,      	// we won't output out of range samples so don't bother clipping them
 						paOutputCallback,	// PortAudio callback function
 						&data);				// data pointer
+
+	logger.info("defaultHighOutputLatency: %.4f", Pa_GetDeviceInfo(output_parameters.device)->defaultHighOutputLatency);
+
 	if(err != paNoError) {
 		logger.error("Failed to open output stream: %s", Pa_GetErrorText(err));
+		exit(-1);
+	}
+
+	// std::this_thread::sleep_for(std::chrono::seconds(5));
+
+	// start the streams
+	err = Pa_StartStream(input_stream);
+	if(err != paNoError) {
+		logger.error("Failed to start input stream: %s", Pa_GetErrorText(err));
 		exit(-1);
 	}
 
