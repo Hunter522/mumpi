@@ -6,7 +6,13 @@ option(test "Build all tests." OFF) # makes boolean 'test' available
 
 project(mumpi)
 add_subdirectory("${PROJECT_SOURCE_DIR}/deps/mumlib")
-set(CMAKE_CXX_STANDARD 14)
+if (CMAKE_VERSION VERSION_LESS "3.1")
+    if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+      set (CMAKE_CXX_FLAGS "--std=gnu++11 ${CMAKE_CXX_FLAGS}")
+    endif ()
+  else ()
+    set (CMAKE_CXX_STANDARD 11)
+endif ()
 set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
 
 # INCLUDES
@@ -34,4 +40,3 @@ file(GLOB TESTS "test/*.cpp")
 add_executable(runUnitTests ${TESTS})
 target_link_libraries(runUnitTests gtest gtest_main)
 add_test(NAME mumpi-test COMMAND runUnitTests)
-
