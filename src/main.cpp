@@ -11,9 +11,9 @@
 #include "MumpiCallback.hpp"
 #include "RingBuffer.hpp"
 
-#define SAMPLE_RATE (48000)
-#define NUM_CHANNELS (1)
-#define FRAMES_PER_BUFFER (512)
+int sample_rate = 48000;
+const int NUM_CHANNELS = 1;
+const int FRAMES_PER_BUFFER = 512;
 
 static log4cpp::Appender *appender = new log4cpp::OstreamAppender("console", &std::cout);
 static log4cpp::Category& logger = log4cpp::Category::getRoot();
@@ -150,16 +150,19 @@ static unsigned nextPowerOf2(unsigned val) {
 void help() {
 	printf("mumpi - Simple mumble client daemon for the RaspberryPi\n\n");
 	printf("Usage:\n");
-	printf("mumpi (-s|--server) string (-u|--username) string (-c|--cert) "
-	       "string [(-h|--help)] [(-v|--verbose)]\n\n");
+	printf("mumpi [options]\n\n");
 	printf("Options:\n");
 	printf("-h, --help                Displays this information.\n");
 	printf("-v, --verbose             Verbose mode on.\n");
 	printf("-s, --server <string>     mumble server IP:PORT. Required.\n");
 	printf("-u, --username <username> username. Required.\n");
-	printf("-d, --delay <delay>       output delay in seconds. Default is \n");
+	printf("-p, --password <password> password.\n");
+	printf("-d, --delay <delay>       output delay in seconds. Default: \n");
 	printf("                          out device's reccomended latency. 0.1\n");
 	printf("                          - 0.5s should be good.\n");
+	printf("-r, --sample-rate <rate>  sample rate for recording and encoding\n");
+	printf("                          Default: 48000. Available options are:\n");
+	printf("                          12000, 24000, or 48000");
 	exit(1);
 }
 
@@ -178,18 +181,21 @@ int main(int argc, char *argv[]) {
 	bool verbose = false;
 	std::string server;
 	std::string username;
+	std::string password;
 	int next_option;
-	const char* const short_options = "hvs:u:d:";
+	const char* const short_options = "hvs:u:p:d:r:";
 	const struct option long_options[] =
 	{
 		{ "help", 0, NULL, 'h' },
 		{ "verbose", 0, NULL, 'v' },
 		{ "server", 1, NULL, 's' },
 		{ "username", 1, NULL, 'u' },
+		{ "password", 1, NULL, 'p' },
 		{ "delay", 1, NULL, 'd'},
+		{ "sample-rate", 1, NULL, 'r'},
 		{ NULL, 0, NULL, 0 }
 	};
-	double outputDelay = -1.0;
+	double output_delay = -1.0;
 
 	// init logger
 	appender->setLayout(new log4cpp::BasicLayout());
@@ -222,8 +228,16 @@ int main(int argc, char *argv[]) {
 			username = std::string(optarg);
 			break;
 
+		case 'p':
+			password = std::string(optarg);
+			break;
+
 		case 'd':
-			outputDelay = std::stod(optarg);
+			output_delay = std::stod(optarg);
+			break;
+
+		case 'r':
+			sample_rate = std::atoi(optarg);
 			break;
 
 		case '?':      // Invalid option
@@ -244,6 +258,12 @@ int main(int argc, char *argv[]) {
 	if(server.empty() || username.empty()) {
 		logger.error("Mandatory arguments not specified");
 		help();
+	}
+
+	// check for valid sample rate
+	if(sample_rate != 48000 && sample_rate != 24000 && sample_rate != 12000) {
+		logger.error("--sample-rate option must be 12000, 24000, or 48000");
+		exit(-1);
 	}
 
 	logger.info("Server:        %s", server.c_str());
@@ -269,7 +289,7 @@ int main(int argc, char *argv[]) {
 	PaStreamParameters output_parameters;
 
 	// set ring buffer size to about 500ms
-	const size_t MAX_SAMPLES = nextPowerOf2(0.5 * SAMPLE_RATE * NUM_CHANNELS);
+	const size_t MAX_SAMPLES = nextPowerOf2(0.5 * sample_rate * NUM_CHANNELS);
 	data.rec_buf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
 	data.out_buf = std::make_shared<RingBuffer<int16_t>>(MAX_SAMPLES);
 
@@ -288,7 +308,7 @@ int main(int argc, char *argv[]) {
 	err = Pa_OpenStream(&input_stream,         // the input stream
 						&inputParameters,      // input params
 						NULL,                  // output params
-						SAMPLE_RATE,           // sample rate
+						sample_rate,           // sample rate
 						FRAMES_PER_BUFFER,     // frames per buffer
 						paClipOff,             // we won't output out of range samples so don't bother clipping them
 						paRecordCallback,      // PortAudio callback function
@@ -309,9 +329,9 @@ int main(int argc, char *argv[]) {
 	output_parameters.channelCount = NUM_CHANNELS;
 	output_parameters.sampleFormat =  paInt16;
 
-	if(outputDelay < 0.0)
-		outputDelay = Pa_GetDeviceInfo(output_parameters.device)->defaultHighOutputLatency;
-	output_parameters.suggestedLatency = outputDelay;
+	if(output_delay < 0.0)
+		output_delay = Pa_GetDeviceInfo(output_parameters.device)->defaultHighOutputLatency;
+	output_parameters.suggestedLatency = output_delay;
 	output_parameters.hostApiSpecificStreamInfo = NULL;
 
 	logger.info("output_parameters.suggestedLatency: %.4f", output_parameters.suggestedLatency);
@@ -319,7 +339,7 @@ int main(int argc, char *argv[]) {
 	err = Pa_OpenStream(&output_stream,		// the output stream
 						NULL, 				// input params
 						&output_parameters,	// output params
-						SAMPLE_RATE,		// sample rate
+						sample_rate,		// sample rate
 						FRAMES_PER_BUFFER,	// frames per buffer
 						paClipOff,      	// we won't output out of range samples so don't bother clipping them
 						paOutputCallback,	// PortAudio callback function
@@ -355,14 +375,15 @@ int main(int argc, char *argv[]) {
 	// This stuff should be on a separate thread
 	MumpiCallback mumble_callback(data.out_buf);
 	mumlib::MumlibConfiguration conf;
-	conf.opusEncoderBitrate = SAMPLE_RATE;
+	conf.opusEncoderBitrate = sample_rate;
 	mumlib::Mumlib mum(mumble_callback, conf);
 	mumble_callback.mum = &mum;
+
 	std::thread mumble_thread([&]() {
 		while(!sig_caught) {
 			try {
 				logger.info("Connecting to %s", server.c_str());
-				mum.connect(server, 64738, username, "");
+				mum.connect(server, 64738, username, password);
 				mum.run();
 			} catch (mumlib::TransportException &exp) {
 				logger.error("TransportException: %s.", exp.what());
@@ -380,7 +401,10 @@ int main(int argc, char *argv[]) {
 		// Opus can encode frames of 2.5, 5, 10, 20, 40, or 60 ms
 		// the Opus RFC 6716 recommends using 20ms frame sizes
 		// so at 48k sample rate, 20ms is 960 samples
-		const int OPUS_FRAME_SIZE = 960;
+		const int OPUS_FRAME_SIZE = (sample_rate / 1000.0)*20.0;
+
+		logger.info("OPUS_FRAME_SIZE: %d", OPUS_FRAME_SIZE);
+
 		int16_t *outBuf = new int16_t[MAX_SAMPLES];
 		while(!sig_caught) {
 			if(!data.rec_buf->isEmpty() && data.rec_buf->getRemaining() >= OPUS_FRAME_SIZE) {
