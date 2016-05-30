@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string>
 #include <thread>
+#include <cmath>
+#include <chrono>
 #include <log4cpp/Category.hh>
 #include <log4cpp/FileAppender.hh>
 #include <log4cpp/OstreamAppender.hh>
@@ -162,7 +164,13 @@ void help() {
 	printf("                          - 0.5s should be good.\n");
 	printf("-r, --sample-rate <rate>  sample rate for recording and encoding\n");
 	printf("                          Default: 48000. Available options are:\n");
-	printf("                          12000, 24000, or 48000");
+	printf("                          12000, 24000, or 48000\n");
+	printf("-x, --vox-threshold <threshold>\n");
+	printf("                          vox threshold in dB. Default: -90dB\n");
+	printf("-i, --voice-hold <interval>\n");
+	printf("                          voice hold interval in seconds. This \n");
+	printf("                          is how long to keep transmitting after \n");
+	printf("                          silence. Default: 0.050s \n");
 	exit(1);
 }
 
@@ -183,19 +191,23 @@ int main(int argc, char *argv[]) {
 	std::string username;
 	std::string password;
 	int next_option;
-	const char* const short_options = "hvs:u:p:d:r:";
+	const char* const short_options = "hvs:u:p:d:r:x:i:";
 	const struct option long_options[] =
 	{
-		{ "help", 0, NULL, 'h' },
-		{ "verbose", 0, NULL, 'v' },
-		{ "server", 1, NULL, 's' },
-		{ "username", 1, NULL, 'u' },
-		{ "password", 1, NULL, 'p' },
-		{ "delay", 1, NULL, 'd'},
-		{ "sample-rate", 1, NULL, 'r'},
+		{ "help", no_argument, NULL, 'h' },
+		{ "verbose", required_argument, NULL, 'v' },
+		{ "server", required_argument, NULL, 's' },
+		{ "username", required_argument, NULL, 'u' },
+		{ "password", required_argument, NULL, 'p' },
+		{ "delay", required_argument, NULL, 'd'},
+		{ "sample-rate", required_argument, NULL, 'r'},
+		{ "vox-threshold", required_argument, NULL, 'x'},
+		{ "voice-hold", required_argument, NULL, 'i'},
 		{ NULL, 0, NULL, 0 }
 	};
 	double output_delay = -1.0;
+	double vox_threshold = -90.0;	// dB
+	std::chrono::duration<double> voice_hold_interval(0.050);	// 50 ms
 
 	// init logger
 	appender->setLayout(new log4cpp::BasicLayout());
@@ -240,6 +252,14 @@ int main(int argc, char *argv[]) {
 			sample_rate = std::atoi(optarg);
 			break;
 
+		case 'x':
+			vox_threshold = std::stod(optarg);
+			break;
+
+		case 'i':
+			voice_hold_interval = std::chrono::duration<double>(std::stod(optarg));
+			break;
+
 		case '?':      // Invalid option
 			help();
 
@@ -268,6 +288,13 @@ int main(int argc, char *argv[]) {
 
 	logger.info("Server:        %s", server.c_str());
 	logger.info("Username:      %s", username.c_str());
+	logger.info("delay:         %f", output_delay);
+	logger.info("sample rate    %d", sample_rate);
+	logger.info("vox threshold  %f", vox_threshold);
+	logger.info("voice hold interval %f", voice_hold_interval);
+
+	// logger.info("Starting in 5 seconds...");
+	// std::this_thread::sleep_for(std::chrono::seconds(5));
 
 	///////////////////////
 	// init audio library
@@ -352,8 +379,6 @@ int main(int argc, char *argv[]) {
 		exit(-1);
 	}
 
-	// std::this_thread::sleep_for(std::chrono::seconds(5));
-
 	// start the streams
 	err = Pa_StartStream(input_stream);
 	if(err != paNoError) {
@@ -405,19 +430,63 @@ int main(int argc, char *argv[]) {
 
 		logger.info("OPUS_FRAME_SIZE: %d", OPUS_FRAME_SIZE);
 
-		int16_t *outBuf = new int16_t[MAX_SAMPLES];
+		std::chrono::steady_clock::time_point start;
+		std::chrono::steady_clock::time_point now;
+		bool voice_hold_flag = false;
+		bool first_run_flag = true;
+		int16_t *out_buf = new int16_t[MAX_SAMPLES];
 		while(!sig_caught) {
 			if(!data.rec_buf->isEmpty() && data.rec_buf->getRemaining() >= OPUS_FRAME_SIZE) {
+
+				// perform VOX algorithm
+				// convert each sample to dB
+				// take average (RMS) of all samples
+				// if average >= threshold, transmit, else ignore
+				// dB = 20 * log_10(rms)
+
+				// also perform a "voice hold" for aprox voice_hold_interval
+				// if we have just transmitted
+
 				// do a bulk get and send it through mumble client
 				if(mum.getConnectionState() == mumlib::ConnectionState::CONNECTED) {
-					data.rec_buf->top(outBuf, 0, OPUS_FRAME_SIZE);
-					mum.sendAudioData(outBuf, OPUS_FRAME_SIZE);
+					data.rec_buf->top(out_buf, 0, OPUS_FRAME_SIZE);
+
+					// compute RMS of sample window
+					double sum = 0;
+					for(int i = 0; i < OPUS_FRAME_SIZE; i++) {
+						const double sample = std::abs(out_buf[i]) / INT16_MAX;
+						sum += sample * sample;
+					}
+					const double rms = std::sqrt(sum / OPUS_FRAME_SIZE);
+
+					double db = vox_threshold;
+					if(rms > 0.0)
+						db = 20.0 * std::log10(rms);
+
+					logger.info("Recorded voice dB: %.2f", db);
+
+					if(!first_run_flag) {
+						now = std::chrono::steady_clock::now();
+						auto duration = now - start;
+						if(duration < voice_hold_interval)
+							voice_hold_flag = true;
+						else
+							voice_hold_flag = false;
+					}
+
+					if(db >= vox_threshold || voice_hold_flag)	{ // only tx if vox threshold met
+						mum.sendAudioData(out_buf, OPUS_FRAME_SIZE);
+						if(!voice_hold_flag) {
+							start = std::chrono::steady_clock::now();
+							first_run_flag = false;
+						}
+					}
 				}
 			} else {
 				std::this_thread::sleep_for(std::chrono::milliseconds(20));
 			}
 		}
-		delete[] outBuf;
+		delete[] out_buf;
 	});
 
 	// init signal handler
@@ -452,11 +521,13 @@ int main(int argc, char *argv[]) {
 	logger.info("Cleaning up PortAudio...");
 
 	// close streams
+	logger.info("Closing input stream");
 	err = Pa_CloseStream(input_stream);
 	if(err != paNoError) {
 		logger.error("Failed to close inputstream: %s", Pa_GetErrorText(err));
 		exit(-1);
 	}
+	logger.info("Closing output stream");
 	err = Pa_CloseStream(output_stream);
 	if(err != paNoError) {
 		logger.error("Failed to close output stream: %s", Pa_GetErrorText(err));
@@ -464,10 +535,12 @@ int main(int argc, char *argv[]) {
 	}
 
 	// terminate PortAudio engine
+	logger.info("Terminating PortAudio engine");
 	err = Pa_Terminate();
 	if(err != paNoError) {
 		logger.error("PortAudio error: %s", Pa_GetErrorText(err));
 		exit(-1);
 	}
+
 	return 0;
 }
